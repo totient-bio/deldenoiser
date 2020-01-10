@@ -1,0 +1,11 @@
+.idea/
+__pycache__/
+.ipynb_checkpoints/
+VERSION
+*.egg-info/
+.coverage
+.pytest_cache/*
+docs/_build/*
+docs/api/*
+dist/*
+build/*
