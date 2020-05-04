@@ -8,8 +8,9 @@ COPY requirements.txt /deldenoiser
 RUN pip install --upgrade pip
 RUN pip install -r /deldenoiser/requirements.txt
 
-COPY deldenoiser/deldenoiser.py /deldenoiser/deldenoiser
-COPY deldenoiser/__init__.py /deldenoiser/deldenoiser
+COPY deldenoiser/__init__.py /deldenoiser/deldenoiser/
+COPY deldenoiser/pbs_algorithm.py /deldenoiser/deldenoiser/
+COPY deldenoiser/nullblockmodel.py /deldenoiser/deldenoiser/
 COPY setup.py /deldenoiser
 COPY README.md /deldenoiser
 COPY command-line-tool/deldenoiser /deldenoiser/command-line-tool

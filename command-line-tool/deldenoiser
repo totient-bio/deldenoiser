@@ -30,33 +30,37 @@ Command line tool to denoise read counts of a DNA-encoded experiment.
 
 Usage:
 
-    deldenoiser --design <DEL_design.tsv>  \
-                --yields <yields.tsv>  \
-                --preselection_readcount <readcounts_pre.tsv>  \
-                --postselection_readcount <readcounts_post.tsv>  \
+    deldenoiser --design <DEL_design.tsv[.gz]>  \
+                --yields <yields.tsv[.gz]>  \
+                --preselection_readcount <readcounts_pre.tsv[.gz]>  \
+                --postselection_readcount <readcounts_post.tsv[.gz]>  \
                 --output_prefix <prefix> \
                 --regularization_strength <alpha> \
                 --dispersion <gamma> \
                 --maxiter <maxiter> \
+                --inner_maxiter <inner_maxiter> \
                 --tolerance <tol> \
-                --parallel_processes <processes>
+                --parallel_processes <processes> \
+                --minyield <minyield> \
+                --maxyield <maxyield> \
+                --F_init <F_init> \
+                --max_downsteps <max_downsteps>
 
 Parameters:
 
-    <DEL_design.tsv>: tab-separated values that encode the number of synthesis
+    <DEL_design.tsv[.gz]>: tab-separated values that encode the number of synthesis
         cycles and the number of lanes in each cycle, with two columns:
             * "cycle": cycle index (1,2,... cmax)
             * "lanes": number of lanes in the corresponding cycle (>= 1)
 
-    <yields.tsv>: tab-separated values that encode the yields of the reactions
+    <yields.tsv[.gz]>: tab-separated values that encode the yields of the reactions
         during synthesis, with three columns:
             * "cycle": cycle index (1,2,... cmax)
-            * "lane": lane index (1,2, ...
-            [number of lanes in the corresponding cycle])
+            * "lane": lane index (1,2, ... lmax[c])
             * "yield": yield of reaction in the corresponding lane
             (real number between 0.0 and 1.0)
 
-    <readcounts_pre.tsv>: tab-separated values that encode the read counts
+    <readcounts_pre.tsv[.gz]>: tab-separated values that encode the read counts
         obtained from sequencing done before the DEL selection steps,
         with cmax + 1 columns:
             * "cycle_1_lane": lane index of cycle 1
@@ -66,7 +70,7 @@ Parameters:
             * "readcount": number of reads of the DNA tag that identifies
             the corresponding lane index combination (non-negative integers)
 
-    <readcounts_post.tsv>, same structure as <readcounts_pre.tsv>,
+    <readcounts_post.tsv[.gz]>, same structure as <readcounts_pre.tsv>,
         but for reads obtained from sequencing done after
         the DEL selection step.
 
@@ -81,6 +85,10 @@ Parameters:
     <maxiter>: maximum number of coordinate descent iterations during fitting
         truncate fitness coefficients (default = 20)
 
+    <inner_maxiter>: maximum number of iterations used for each coordinate
+        descent step (these are usually Newton-Raphson steps,
+        but if those fail, they become Anderson-Bjoerck steps.
+
     <tol>: tolerance, if the intensity due to truncates changes less than this
         between consecutive iterations of coordinate descent, the the fitting
         is stopped, before reaching maxiter number of iterations
@@ -89,48 +97,49 @@ Parameters:
     <processes>: max number of parallel processes to start
         during fitting truncates (default = number of system CPUs)
 
+    <minyield>: lowest allowed input yield value, yields lower than this
+        get censored to this level during preprocessing (default = 1e-10)
+
+    <maxyield>: highest allowed input yield value, yields higher than this
+        get censored to this level during preprocessing (default = 0.95)
+
+    <F_init>: initial value for truncate fitness
+        (default: internal guess is used)
+
+    <max_downsteps>: max number of allowed iterations when logL is decreasing
+        If it is reached, the optimization terminates. (default = 5)
+
+
 Output files:
 
-    1. <prefix>_product_yields.tsv: tab-separated values with the same
-        set of cycle lane index columns as the readcount input files,
-        but instead of the readcounts this file contains the overall
-        yield of the complete compounds:
-            * "cycle_<cid>_lane": lane index of cycle cid = 1,2,... cmax
-            * "compound_yield": overall yield of the compound corresponding
-            lane index combination
-
-    2. <prefix>_count_breakdown.tsv: tab-separated values with the
-        same set of cycle lane index columns as the readcount input files,
-        plus a breakdown of the read counts by success patterns:
+    1. <prefix>_fullcycleproducts.tsv.gz: tab-separated values containing the
+        results about full-cycle products, each identified by their extended
+        lane index combination. The cmax + 3 columns contain
             * `cycle_<cid>_lane`: lane index of cycle cid = 1,2,... cmax
-            * `readcount_<pattern>`: fractional read count associated with
-            lane combination and the success pattern, which is a string of
-            cmax "0" or "1" characters. (E.g. if cmax = 3, one of the columns
-            will be `readcounts_010`, which will contain the read counts for
-            the truncates due the faliure of both the first and the
-            third cycle.)
+            * `fitness`: fitness coefficients
+            * `clean_reads`: posterior mode of clean reads
+        Note: Only records corresponding to non-zero input read counts are
+            printed in this file. Compounds with zero observed reads are
+            implicitly assumed to have zero fitness, and zero clean reads.
 
-    3. <prefix>_fitness.tsv: tab-separated values with the same set of cycle
-        lane index columns as the readcount input files, and a single column
-        containing the fitness coefficients of the legitimate product
-        associated with the lane combination.
-            * `cycle_<cid>_lane`: lane index of cycle cid = 1,2,... cmax
-            * `fitness`: fitness coefficient legitimate compounds
-
-    4. <prefix>_truncate_fitness.tsv: tab-separated encoding the fitness
+    2. <prefix>_truncates.tsv.gz: tab-separated encoding the fitness
         coefficients of the truncates, each identified by their extended lane
         index combination. The cmax + 1 columns contain
             * `cycle_<cid>_lane`: extended lane index (which can take 0
             as well, as an indication that the synthesis cycle failed)
-            of cycle cid = 1,2,... cmax
+            of cycle cid = 0,1,2,... cmax
             * `fitness`: fitness coefficient truncated compounds
+        Note: Only records corresponding to truncates that are estimated to
+            have non-zero fitness are printed in this file. The truncates
+            missing from here should be understood to have zero fitness.
 
-    5. <prefix>_tag_imbalance.tsv: tab-separated values
-        with the same set of cycle lane index columns as the readcount
-        input files, and a single column
-        containing the tag imbalance for each tag.
-            * `cycle_<cid>_lane`: lane index of cycle cid = 1,2,... cmax
-            * `tag_imbalance`: tag imbalance for each tag
+    3. <prefix>_tag_imbalance_factors.tsv.gz: tab-separated values containing
+        the estimated tag imbalance factors (bhat) for each cycle and lane.
+        It has 3 columns (the same shape as the optional <yields.tsv[.gz]>
+        input file):
+            * "cycle": cycle index (1,2,... cmax)
+            * "lane": lane index (1,2, ... lmax[c])
+            * "imbalance_factor": imbalance factor (bhat[cycle][lane])
 """
 
 import os
@@ -143,7 +152,7 @@ import warnings
 from itertools import product
 from multiprocessing import cpu_count
 
-from deldenoiser.deldenoiser import NullblockModel
+from deldenoiser.nullblockmodel import NullBlockModel
 
 DEFAULT_YIELDS = 0.5
 DEBUG = True
@@ -155,7 +164,11 @@ def debugging_message(msg):
 
 
 def preprocess_design_file(design_file):
-    df_design = pd.read_csv(design_file, sep='\t')
+    if design_file.endswith('.gz'):
+        compression = 'gzip'
+    else:
+        compression = None
+    df_design = pd.read_csv(design_file, sep='\t', compression=compression)
     if list(df_design.columns) != ['cycle', 'lanes']:
         raise ValueError('design file must have columns ["cycle", "lanes"]')
 
@@ -175,102 +188,6 @@ def preprocess_design_file(design_file):
         raise ValueError(error_message)
 
     return design
-
-
-def preprocess_readcount_file(readcount_file, model):
-    df_counts = pd.read_csv(readcount_file, sep='\t')
-    cols = len(df_counts.columns)
-    cmax = cols - 1
-    lane_index_cols = [f'cycle_{c}_lane' for c in range(1, cmax + 1, 1)]
-    if (list(df_counts.columns) != lane_index_cols + ['readcount']):
-        raise ValueError(
-            'readcount file must have columns: "cycle_<cid>_lane", '
-            'where <cid> = 1,2,... cmax, and "readcount".')
-    for c in range(cmax):
-        col = f'cycle_{c+1}_lane'
-        error_message = f'column "{col}" must contain positive integers'
-        lane = df_counts[col].values
-        if (lane != lane.astype(int)).any():
-            raise ValueError(error_message)
-        if (lane <= 0).any():
-            raise ValueError(error_message)
-
-    df_counts.sort_values(by=lane_index_cols, inplace=True)
-
-    lane_indexes = df_counts[lane_index_cols].values
-    if len(set(map(tuple, lane_indexes))) < len(lane_indexes):
-        raise ValueError('cycle lane columns in read count file must not '
-                         'contain duplicate '
-                         'lane index combinations')
-
-    error_message = f'column "readcount" in read count file ' \
-                    f'must contain non-negative integers'
-    counts = df_counts['readcount'].values
-    if (counts != counts.astype(int)).any():
-        raise ValueError(error_message)
-    if (counts < 0).any():
-        raise ValueError(error_message)
-
-    error_message = 'cycle lane columns in read count file must contain a ' \
-                    'exactly the lane combinations allowed by the design, ' \
-                    'and must be sorted'
-    if (lane_indexes != model.lane_indexes).any():
-        raise ValueError(error_message)
-
-    return counts
-
-
-def preprocess_yields_file(yields_file, model):
-    df_yields = pd.read_csv(yields_file, sep='\t')
-    if list(df_yields.columns) != ['cycle', 'lane', 'yield']:
-        raise ValueError('yields file must have columns '
-                         '"cycle", "lane", "yields')
-
-    error_message = '"cycle" column of yields file ' \
-                    'must contain positive integers'
-    if (df_yields['cycle'].values !=
-        df_yields['cycle'].values.astype(int)).any():
-        raise ValueError(error_message)
-    if (df_yields['cycle'].values <= 0).any():
-        raise ValueError(error_message)
-
-    error_message = '"lane" column of yields file ' \
-                    'must contain positive integers'
-    if (df_yields['lane'].values !=
-        df_yields['lane'].values.astype(int)).any():
-        raise ValueError(error_message)
-    if (df_yields['lane'].values <= 0).any():
-        raise ValueError(error_message)
-
-    error_message = '"yield" column of yields file must contain ' \
-                    'floating point values, 0.0 < yield < 1.0'
-    if (df_yields['yield'] <= 0.0).any() or (df_yields['yield'] >= 1.0).any():
-        raise ValueError(error_message)
-    if np.isnan(df_yields['yield']).any():
-        raise ValueError(error_message)
-
-    df_yields.sort_values(by=['cycle', 'lane'], inplace=True)
-    cycles = df_yields['cycle'].values
-    lanes = df_yields['lane'].values
-    yields = df_yields['yield'].values
-
-    error_message = '"cycle" and "lane" columns in yields file ' \
-                    'must list every cycle-lane ' \
-                    'combination in the design.'
-    cmax = len(model.design)
-    expected_cycles = np.concatenate([(c + 1) * np.ones(model.design[c])
-                                      for c in range(cmax)])
-    expected_lanes = np.concatenate([np.arange(1, model.design[c] + 1, 1)
-                                     for c in range(cmax)])
-    if (cycles != expected_cycles).any() or (lanes != expected_lanes).any():
-        raise ValueError(error_message)
-
-    yield_list = []
-    idx_start = 0
-    for c in range(cmax):
-        yield_list.append(yields[idx_start:idx_start + model.design[c]])
-        idx_start += model.design[c]
-    return yield_list
 
 
 def preprocess_output_prefix(prefix):
@@ -307,6 +224,10 @@ def preprocess_maxiter(maxiter):
         raise ValueError('maxiter must be positive integer')
     return maxiter
 
+def preprocess_inner_maxiter(inner_maxiter):
+    if inner_maxiter < 1:
+        raise ValueError('inner_maxiter must be positive integer')
+    return inner_maxiter
 
 def preprocess_tolerance(tol):
     if tol <= 0.0:
@@ -328,7 +249,7 @@ def preprocess_processes(processes):
 def main(args):
 
     ##########################################################################
-    # Step 1: Pre-process data
+    # Step 0: Pre-process data
     ##########################################################################
     if DEBUG:
         debugging_message('Pre-processing input data')
@@ -337,148 +258,125 @@ def main(args):
     gamma = preprocess_dispersion(args.dispersion)
     design = preprocess_design_file(args.design)
     maxiter = preprocess_maxiter(args.maxiter)
+    inner_maxiter = preprocess_maxiter(args.inner_maxiter)
     tol = preprocess_tolerance(args.tolerance)
     processes = preprocess_processes(args.parallel_processes)
 
-    model = NullblockModel(design, alpha, gamma)
+    nbm = NullBlockModel(design, alpha, gamma, default_yield=DEFAULT_YIELDS)
 
-    post_counts = preprocess_readcount_file(args.postselection_readcount,
-                                            model)
-
+    ##########################################################################
+    # Step 1: Fit sequencing bias from pre-selection read counts
+    ##########################################################################
+    if DEBUG:
+        debugging_message('Fitting sequencing bias')
     if args.preselection_readcount is not None:
-        pre_counts = preprocess_readcount_file(args.preselection_readcount,
-                                               model)
+        nbm.fit_sequence_imbalance(args.preselection_readcount)
     else:
-        pre_counts = None
-
-    if args.yields is not None:
-        yields = preprocess_yields_file(args.yields, model)
-    else:
-        yields = None
+        debugging_message('Assuming uniform imbalance factors')
+        nbm.bhat = [np.ones(lmax) / lmax for lmax in nbm.design]
+        nbm.x = nbm._compute_x()
 
     ##########################################################################
     # Step 2: Load yields
     ##########################################################################
     if DEBUG:
         debugging_message('Loading yields')
-    if yields is None:
-        yields = [DEFAULT_YIELDS * np.ones(lmax) for lmax in model.design]
-    model.load_yields(yields)
-
-    ##########################################################################
-    # Step 3: Fit sequencing bias from pre-selection read counts
-    ##########################################################################
-    if DEBUG:
-        debugging_message('Fitting sequencing bias')
-    if pre_counts is None:
-        # No pre-sequencing data -> assume uniform sequencing efficiency
-        sequencing_bias = np.ones_like(post_counts)
+    if args.yields is not None:
+        nbm.load_yields(args.yields,
+                        float(args.minyield), float(args.maxyield))
     else:
-        sequencing_bias, _ = model.fit_sequencing_bias(pre_counts)
+        debugging_message('Assuming uniform yields')
+        nbm.yields = [DEFAULT_YIELDS * np.ones(lmax) for lmax in nbm.design]
+        nbm.x = nbm._compute_x()
 
     ##########################################################################
-    # Step 4: Fit fitness of truncated compounds
+    # Step 3: Load post-selection read count data
     ##########################################################################
     if DEBUG:
-        debugging_message('Fitting fitness of truncates')
-    truncates_fitness, truncates_floor = model.fit_truncates(
-        sequencing_bias,
-        post_counts,
-        max_processes=processes,
-        maxiter=maxiter,
-        tol=tol,
-        debug=DEBUG)
+        debugging_message('Loading post-selection read count data')
+    nbm.load_postselection_readcount(args.postselection_readcount)
 
     ##########################################################################
-    # Step 5: Fit fitness of legitimate compounds
+    # Step 4 & 5: Guess and fit fitness of truncated compounds
     ##########################################################################
     if DEBUG:
-        debugging_message('Fitting fitness of legitimate compounds')
-    legitimates_fitness = model.fit_legitimates(
-        sequencing_bias,
-        post_counts,
-        truncates_floor
-    )
+        debugging_message('Guessing initial fitness values of truncates')
+    nbm.guess_truncates(processes=processes)
+
+    if DEBUG:
+        debugging_message('Fitting fitness values of truncates')
+    nbm.fit_truncates(maxiter, inner_maxiter,tol=tol,
+                      processes=processes, debug=DEBUG,
+                      max_downsteps=args.max_downsteps,
+                      F_init=args.F_init)
 
     ##########################################################################
-    # Step 6: Compute breakdown of read counts
+    # Step 6: Fit fitness of full-cycle compounds
+    ##########################################################################
+    if DEBUG:
+        debugging_message('Fitting fitness of full-cycle compounds')
+    F_fullcycle = nbm.fit_fullcycles()
+
+    ##########################################################################
+    # Step 7: Compute breakdown of read counts
     ##########################################################################
     if DEBUG:
         debugging_message('Computing read count breakdown')
-    count_breakdown_matrix = model.compute_readcount_breakdown(
-        sequencing_bias,
-        truncates_fitness,
-        legitimates_fitness['mean'],
-        post_counts
-    )
+    N_clean = nbm.compute_clean_readcounts(F_fullcycle)
 
     ##########################################################################
-    # Step 7: Write results to files
+    # Step 8: Write results to files
     ##########################################################################
     if DEBUG:
         debugging_message('Compiling output tables')
-    cmax = len(model.design)
-    s_list = list(product(*[[0, 1] for _ in range(cmax)]))
-    df_lanes = pd.DataFrame(
-        dict(zip([f'cycle_{c}_lane' for c in range(1, cmax + 1, 1)],
-                 model.lane_indexes.T))
-    )
+    cmax = len(nbm.design)
     output_kwargs = {
+        'compression': 'gzip',
         'sep': '\t',
-        'index': False
+        'index': False,
+        'float_format': '%.4f'
     }
 
     # Step 7.1
-    # Create overall yields table
-    # For each lane combination this contains the appropriate product of
-    # individual cycle yields.
-    df_yields = df_lanes.copy()
-    for s_idx, s in enumerate(s_list):
-        s_str = ''.join(map(str, s))
-        df_yields[f'fraction_of_{s_str}'] = \
-            model.inventory_matrix[:, s_idx]
-    df_yields.to_csv(f'{prefix}_inventory.tsv',
-                     **output_kwargs, float_format='%.4f')
-
-    # Step 7.2
-    # Create count breakdown table
-    df_count_breakdown = df_lanes.copy()
-    for s_idx, s in enumerate(s_list):
-        s_str = ''.join(map(str, s))
-        df_count_breakdown[f'readcount_{s_str}'] = \
-            count_breakdown_matrix[:, s_idx]
-    df_count_breakdown.to_csv(f'{prefix}_count_breakdown.tsv',
-                              **output_kwargs, float_format='%.4f')
-
-    # Step 7.3
-    # Create fitness table of legitimate compounds
-    df_fitness_legitimates = df_lanes.copy()
-    df_fitness_legitimates['fitness_mode'] = legitimates_fitness['mode']
-    df_fitness_legitimates['fitness_mean'] = legitimates_fitness['mean']
-    df_fitness_legitimates['fitness_minimum_stdev'] = \
-        legitimates_fitness['std']
-    df_fitness_legitimates.to_csv(f'{prefix}_fitness.tsv', **output_kwargs)
-
-    # Step 7.4
-    # Create fitness table of only the truncated compounds
-    truncates = (model.bb_indexes == 0).any(axis=1)
-    index_cols = model.bb_indexes[truncates, :]
-    fitness = truncates_fitness[truncates]
-    df_fitness_truncates = pd.DataFrame(
-        dict(zip([f'cycle_{c}_lane' for c in range(1, cmax + 1, 1)],
-                 index_cols.T))
-    )
-    df_fitness_truncates['fitness'] = fitness
-    df_fitness_truncates.to_csv(f'{prefix}_truncate_fitness.tsv',
+    # Write table <prefix>_fullcycleproducts.tsv.gz
+    # Columns:
+    # * `cycle_<cid>_lane`: lane index of cycle cid = 1,2,... cmax
+    # * `fitness`: fitness coefficients
+    # * `clean_reads`: posterior mode of clean reads
+    df_fullcycleproducts = pd.DataFrame()
+    for c in range(cmax):
+        df_fullcycleproducts[f'cycle_{c+1}_lane'] = nbm.r_arr[:, c]
+    df_fullcycleproducts['fitness'] = F_fullcycle
+    df_fullcycleproducts['clean_reads'] = N_clean
+    df_fullcycleproducts.to_csv(f'{prefix}_fullcycleproducts.tsv.gz',
                                 **output_kwargs)
 
-    # Step 7.5
-    # Create tag_imbalance table
-    df_tag_imbalance = df_lanes.copy()
-    df_tag_imbalance['tag_imbalance'] = (sequencing_bias
-                                         / np.mean(sequencing_bias)
-                                         )
-    df_tag_imbalance.to_csv(f'{prefix}_tag_imbalance.tsv', **output_kwargs)
+    # Step 7.2
+    # Write table <prefix>_truncates.tsv.gz
+    # Columns:
+    # * `cycle_<cid>_lane`: extended lane index
+    # * `fitness`: fitness coefficient truncated compounds
+    df_truncates = pd.DataFrame()
+    for c in range(cmax):
+        df_truncates[f'cycle_{c+1}_lane'] = nbm.q_arr[:, c]
+    df_truncates['fitness'] = nbm.F
+    df_truncates.to_csv(f'{prefix}_truncates.tsv.gz', **output_kwargs)
+
+    # Step 7.3
+    # Write table <prefix>_tag_imbalance_factors.tsv.gz
+    # Columns:
+    # * "cycle": cycle index (1,2,... cmax)
+    # * "lane": lane index (1,2, ... lmax[c])
+    # * "imbalance_factor": imbalance factor (bhat[cycle][lane])
+    df_tagimbalance = pd.DataFrame()
+    df_tagimbalance['cycle'] = np.concatenate(
+        [[c+1] * nbm.design[c] for c in range(cmax)])
+    df_tagimbalance['lane'] = np.concatenate(
+        [list(range(1, nbm.design[c]+1)) for c in range(cmax)]
+    )
+    df_tagimbalance['imbalance_factor'] = np.concatenate(nbm.bhat)
+    df_tagimbalance.to_csv(f'{prefix}_tag_imbalance_factors.tsv.gz',
+                           **output_kwargs)
 
 
 if __name__ == '__main__':
@@ -492,8 +390,7 @@ if __name__ == '__main__':
             "cycle": cycle index (1,2,... cmax),
             "lanes": number of lanes in the corresponding cycle (must be >= 1)
     """,
-                        required=True,
-                        type=argparse.FileType('r'))
+                        required=True)
 
     parser.add_argument('--postselection_readcount', help=
     """ TSV file that encode the read counts
@@ -502,13 +399,12 @@ if __name__ == '__main__':
                 "cycle_1_lane": lane index of cycle 1,
                 "cycle_2_lane": lane index of cycle 2,
                 ...
-                "cycle_<cmax>_lane": lane index of cycle cmax,
+                "cycle_<cmax>_lane": lane index of cycle <cmax>,
                 "readcount": number of reads of the DNA tag that identifies
                     the corresponding lane index combination
                     (non-negative integers)
     """,
-                        required=True,
-                        type=argparse.FileType('r'))
+                        required=True)
 
     parser.add_argument('--output_prefix', help=
     """ string (which can include the path) to name the output files.
@@ -536,6 +432,14 @@ if __name__ == '__main__':
     """,
                         required=False,
                         type=int, default=20)
+
+    parser.add_argument('--inner_maxiter', help=
+    """ maximum number of iterations for each coordinate descent step
+        during fitting truncates. (default: 10)
+    """,
+                        required=False,
+                        type=int, default=10)
+
     parser.add_argument('--tolerance', help=
     """ tolerance, if the intensity due to truncates changes less than this
         between consecutive iterations of coordinate descent, the the fitting
@@ -543,12 +447,14 @@ if __name__ == '__main__':
     """,
                         required=False,
                         type=float, default=0.1)
+
     parser.add_argument('--parallel_processes', help=
     """ max number of parallel processes to run during fitting truncates
         (default: number of system CPUs)
     """,
                         required=False,
                         type=int, default=cpu_count())
+
     parser.add_argument('--yields', help=
     f""" TSV file that encodes the yields of the reactions
         during synthesis, with three columns:
@@ -559,15 +465,39 @@ if __name__ == '__main__':
                 (real number between 0.0 and 1.0)
         (default: all values = {DEFAULT_YIELDS} )
     """,
-                        required=False,
-                        type=argparse.FileType('r'))
+                        required=False)
 
     parser.add_argument('--preselection_readcount', help=
     """ Same structure as POSTSELECTION_READCOUNTS, for read counts obtained
         from sequencing before DEL selection step.
     """,
-                        required=False,
-                        type=argparse.FileType('r'))
+                        required=False)
+
+    parser.add_argument('--minyield', help=
+    """ Lowest allowed yield value, inputs lower than this are censored to
+        this level. (default = 1e-10)
+    """,
+                        type=float, default=1e-10 ,
+                        required=False)
+
+    parser.add_argument('--maxyield', help=
+    """ Highest allowed yield value, inputs higher than this are censored to
+        this level. (default = 0.95)
+    """,
+                        type=float, default=0.95 ,
+                        required=False)
+
+    parser.add_argument('--F_init', help=
+    """ Initial guess of truncate fintess values.
+    """,
+                        default=None, required=False)
+
+    parser.add_argument('--max_downsteps', help=
+    """ if log-likelihood decreases this number of times throughout 
+        the optimization, the optimization is terminated
+    """,
+                        type=int, default=5,
+                        required=False)
 
     if DEBUG:
         debugging_message('Reading command line arguments')

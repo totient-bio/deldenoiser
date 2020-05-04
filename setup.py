@@ -1,7 +1,7 @@
 __author__ = 'Peter Komar "\
              "<peter.komar@totient.bio>'
 __copyright__ = '2020 Totient, Inc'
-__version__ = '1.0.0'
+__version__ = '2.0.0'
 
 import io
 from datetime import datetime

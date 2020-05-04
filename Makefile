@@ -6,7 +6,7 @@ DOCKER_IMAGE := deldenoiser:$(GIT_HASH)
 
 
 example:
-	cd ./example && bash run_deldenoiser_command_line_tool.bash
+	cd ./example && bash run_command_line_tool.bash
 
 
 docs:

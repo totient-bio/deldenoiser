@@ -63,8 +63,8 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'deldenoiser'
-copyright = '2019 Totient, Inc'
-author = 'Totient Molecular Characterization Team <peter.komar@totient.bio>'
+copyright = '2020 Totient, Inc'
+author = 'Peter Komar <peter.komar@totient.bio>'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -159,7 +159,7 @@ latex_elements = {
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
     (master_doc, 'deldenoiser.tex', 'deldenoiser Documentation',
-     'Totient Molecular Characterization Team \\textless{}peter.komar@totient.bio\\textgreater{}',
+     'Peter Komar \\textless{}peter.komar@totient.bio\\textgreater{}',
      'manual'),
 ]
 
@@ -220,7 +220,7 @@ autoclass_content = 'both'
 autodoc_member_order = 'bysource'
 
 
-git_doc_root = 'https://gitlab.totient.bio/mol-char/deldenoiser/tree/master/docs/'
+git_doc_root = 'https://github.com/totient-bio/deldenoiser/tree/master/docs/'
 def setup(app):
     app.add_config_value('recommonmark_config', {
             'enable_auto_toc_tree': True,

@@ -15,19 +15,19 @@ Table of Contents
 ## Summary 
 
 Sequencing read counts from a DEL screen are used as input.
-The main output is the list of *fitness coefficients* for the compounds. Fore ach compound, they are proportional to its surviving fraction during binding assay. The following analysis steps are carried out by deldenoiser command line tool:
+The main output is the list of *fitness coefficients* for the compounds. For each compound, this is proportional to the surviving fraction during binding assay. The following analysis steps are carried out by deldenoiser command line tool:
 
-1. Estimate **tag imbalance** from pre-selection read counts. (Only if such data is available.)
+1. Estimate **tag imbalance factors** from pre-selection read counts. (Only if such data is available.)
 
 2. Estimate **fitness of truncated compounds** using post-selection read counts, yields and tag imbalances factors.
 
 3. Estimate **fitness of full-cycle compounds** using fitness of truncates.
 
-4. Computate **breakdown of read counts** by truncation pattern.
+4. Estimate **clean read counts**, i.e. the reads originating fro the full cycle products.
 
-It is assumed that yields of synthesis reactions are known, and the true fitness vector is sparse i.e. only a small minority of the DEL compounds have significant binding strength.
+It is assumed that yields of synthesis reactions are known, and the true fitness vector is sparse, i.e. only a small minority of the DEL compounds have significant binding strength.
 
-Note: We use a micro-fluidics-inspired terminology and refer to the different reactions that are run in parallel in each synthesis cycle as "lanes".
+Note: We use a microfluidics-inspired terminology and refer to the different reactions that are run in parallel in each synthesis cycle as "lanes".
 
 <a name="installation"></a>
 ## Installation
@@ -56,96 +56,112 @@ make docker_image
 <a name="usage"></a>
 ## Usage
 
-For a complete example, see [example/run_deldenoiser\_command\_line\_tool.bash](example/run_deldenoiser_command_line_tool.bash), which reads input files from [example/input/](example/input/) and writes results to [example/output/](example/output/).
+For a complete example, see [example/run_deldenoiser\_command\_line\_tool.bash](example/run_command_line_tool.bash), which reads input files from [example/input/](example/input/) and writes results to [example/output/](example/output/).
 
 Generally, running the command
 
 ```
-deldenoiser --design <DEL_design.tsv>
-            --postselection_readcount <readcounts_post.tsv>
-            --output_prefix <prefix>
-            [--dispersion <dispersion>]
-            [--regularization_strength <alpha>]
-            [--yields <yields.tsv>]
-            [--preselection_readcount <readcounts_pre.tsv>]
-            [--maxiter <maxiter>]
-            [--tolerance <tol>]
-            [--parallel_processes <processes>]
+deldenoiser --design <DEL_design.tsv.gz>  \
+            --postselection_readcounts <readcounts_post.tsv.gz>  \
+            --output_prefix <prefix> \
+            [--dispersion <dispersion>] \
+            [--regularization_strength <regularization_strength>] \
+            [--yields <yields.tsv.gz>]  \
+            [--preselection_readcount <readcounts_pre.tsv.gz>] \
+            [--maxiter <maxiter>] \
+            [--inner_maxiter <inner_maxiter>] \   
+            [--tolerance <tol>] \
+            [--parallel_processes <processes>] \
+            [--minyield <minyield>] \
+            [--maxyield <maxyield>] \
+            [--F_init <F_init>] \
+            [--max_downsteps <max_downsteps>]
             
 ```
-produces 5 files,
+produces 3 files,
 
-* `<prefix>_fitness.tsv`
-* `<prefix>_truncate_fitness.tsv`
-* `<prefix>_count_breakdown.tsv`
-* `<prefix>_tag_imbalance.tsv`
-* `<prefix>_inventory.tsv`
+* `<prefix>_fullcycleproducts.tsv.gz`
+* `<prefix>_truncates.tsv.gz`
+* `<prefix>_tag_imbalance_factors.tsv.gz`
+
 
 <a name="inputs"></a>
 ### Inputs
 
-1. `<DEL_design.tsv>`, file of tab-separated values that encode the number of lanes in each cycle. It has two columns:
-    * `cycle`: cycle index (1,2, ... cmax)    
+1. `<DEL_design.tsv>`, tab-separated values that encode the number of synthesis cycles and the number of lanes in each cycle, with two columns:
+    * `cycle`: cycle index (1,2,... cmax)    
     * `lanes`: number of lanes in the corresponding cycle (must be >= 1)
 
-2. `<readcounts_post.tsv>`, file of tab-separated values that encode the read counts obtained from sequencing done *after* the DEL selection steps, with cmax + 1 columns:
+2. `<readcounts_post.tsv>`, tab-separated values that encode the read counts obtained from sequencing done after the DEL selection steps, with cmax + 1 columns:
     * `cycle_1_lane`: lane index of cycle 1
     * `cycle_2_lane`: lane index of cycle 2
     * ...
     * `cycle_<cmax>_lane`: lane index of cycle cmax
-    * `readcount`: number of reads (non-negative integers) of DNA tags corresponding to each lane index combination.
+    * `readcount`: number of reads of the DNA tag that identifies the corresponding lane index combination (non-negative integers)
 
-3. `<prefix>`, string used to give unique name the output files, (it can also contain a path).
+3. `<prefix>`, string (that can include the path) to name the output files.
  
 **Optional inputs:**
 
-4. `<dispersion>`, dispersion parameter for the dispersed Poisson noise, (optional, default: 1.0)
+4. `<dispersion>`, dispersion parameter for the dispersed Poisson noise, (optional, default: 3.0)
 
-5. `<alpha>`, regularization strength parameter, the higher the more sparse solutions are favored (optional, default: 1.0)
+5. `<regularization_strength>`, regularization strength parameter, (optional, default: 1.0)
  
-4. `<yields.tsv>`, file of tab-separated values that encode yields of each reaction of synthesis, with three columns (optional, default: all yields are set to 0.5):
-    * `cycle`: cycle index (1,2, ... cmax)
-    * `lane`: lane index (1,2, ... [max lane index in cycle])
-    * `yield`: yield of reaction in the corresponding lane (0.0 .. 1.0)
+4. `<yields.tsv>`, tab-separated values that encode the yields of the reactions during synthesis, with three columns (optional, default: all yields are set to 0.5):
+    * `cycle`: cycle index (1,2,... cmax)
+    * `lane`: lane index (1,2, ... [number of lanes in the corresponding cycle])
+    * `yield`: yield of reaction in the corresponding lane (real number between 0.0 and 1.0)
 
-6. `<readcounts_pre.tsv>`, file with the same structure as `<readcounts_post.tsv>`, but for reads obtained from sequencing done *before* the DEL selection step, (optional, default: assumed to be uniform across all sequences.)
+6. `<readcounts_pre.tsv>`, same structre as `<readcounts_post.tsv>`, but for reads obtained from sequencing done before the DEL selection step, (optional, default: sequencing efficiency is assumed to be uniform accross all sequences.)
 
-7. `<maxiter>`: maximum number of coordinate descent iterations during fitting truncate fitness coefficients (default: 20)
+7. `<maxiter>`: maximum number of coordinate descent iterations during fitting truncates (default = 20)
 
-8. `<tol>`: tolerance, if the total Poisson intensity of truncates changes less than this between consecutive iterations of coordinate descent, then fitting is stopped even before the number of iterations reaches maxiter (optional, default: 0.1)
+8. `<inner_maxiter>`: maximum number of iterations for each coordinate descent step during fitting truncates (default = 10)
 
-9. `<processes>`: maximum number of parallel processes deldenoiser is allowed to start during fitting truncates (optional, default: number of system CPUs)
+9. `<tol>`: tolerance, if the intensity due to truncates changes less than this between consecutive iterations of coordinate descent, the the fitting is stopped, before reaching maxiter number of iterations (default = 0.1)
+
+10. `<processes>`: max number of parallel processes to start during fitting truncates (default = number of system CPUs)
+
+11. `minyield`: lowest allowed input yield value, yields lower than this
+        get censored to this level during preprocessing (default = 1e-10)
+
+12. `maxyield`: highest allowed input yield value, yields higher than this
+        get censored to this level during preprocessing (default = 0.95)
+
+13. `F_init`: initial value for truncate fitness
+        (default: internal guess is used)
+
+14. `max_downsteps`: max number of allowed iterations when logL is decreasing
+        If it is reached, the optimization terminates. (default = 5)
 
 
 <a name="outputs"></a>
 ### Outputs
 
-1. `<prefix>_fitness.tsv`, tab-separated values with the same index columns as the readcount input files, and three columns containing the mode, mean and min. stdev of the estimated fitness coefficients of the corresponding full-cycle products.
+1. `<prefix>_fullcycleproducts.tsv.gz`: tab-separated values containing the results about full-cycle products, each identified by their extended lane index combination. The cmax + 3 columns contain
     * `cycle_<cid>_lane`: lane index of cycle cid = 1,2,... cmax
-    * `fitness_mode`: estimated fitness of full-cycle compounds (mode of the posterior)
-    * `fitness_mean`: estimated fitness of full-cycle compounds (mean of the posterior)
-    * `fitness_minimum_stdev`: estimated lower bound on the posterior standard deviation of the fitness of full-cycle compounds
+    * `fitness`: fitness coefficients
+    * `clean_reads`: posterior mode of clean reads
+Note: Only records corresponding to non-zero input read counts are printed in this file. Compounds with zero observed reads are implicitly assumed to have zero fitness, and zero clean reads.
 
-2. `<prefix>_truncate_fitness.tsv`, tab-separated values encoding the fitness coefficients of the truncates, each identified by their *extended lane index*. The cmax + 1 columns contain
-    * `cycle_<cid>_lane`: extended lane index (which can take 0 as well, marking synthesis cycles that failed) of cycle cid = 1,2,... cmax
-    * `fitness`: estimated fitness coefficients truncated compounds
+2. `<prefix>_truncates.tsv.gz`: tab-separated encoding the fitness coefficients of the truncates, each identified by their extended lane index combination. The cmax + 1 columns contain
+    * `cycle_<cid>_lane`: extended lane index (which can take 0 as well, as an indication that the synthesis cycle failed) of cycle cid = 0,1,2,... cmax
+    * `fitness`: fitness coefficient truncated compounds
+Note: Only records corresponding to truncates that are estimated to have non-zero fitness are printed in this file. The truncates missing from here should be understood to have zero fitness.
 
-3. `<prefix>_count_breakdown.tsv`, tab-separated values with the same index columns as the read count input files, and one columns containing the breakdown of the read counts by success pattern:
-    * `cycle_<cid>_lane`: lane index of cycle cid = 1,2,... cmax
-    * `readcount_<pattern>`: estimated fractional read count associated with each success pattern. Success pattern is a string of cmax number of "0" and "1" characters. (E.g. if cmax = 3, one of the columns will be `readcounts_010`, which will contain the read counts of the truncates associated with the failure of both the 1st and the 3rd cycle.) Note: The row sums are equal to counts from `<readcounts_post.tsv>` (up to floating point precision).
-
-4. `<prefix>_tag_imbalance.tsv`, tab-separated values with the index columns as the read count input files, and a column of tag imbalances that estimated from pre-selection data (If no pre-selection data is provided, this file is still created, but it contains uniform values):
-    *  `cycle_<cid>_lane`: lane index of cycle cid = 1,2,... cmax
-    *  `tag_imbalance`: estimated imbalance of tags due to difference in nucleotide content, normalized to have mean of 1.
-
-5. `<prefix>_inventory.tsv`, tab-separated values with the same index columns as the read count input files, but instead of the read counts this file contains the fractional composition associated with each success pattern. It is directly computed from the yields.
-    * `cycle_<cid>_lane`: lane index of cycle cid = 1,2,... cmax
-    * `fraction_of_<pattern>`: overall yield of the compound corresponding the success pattern, which is a string of cmax number of "0" or "1" characters. (E.g. if cmax = 3, one of the columns is `fraction_of__010`, which contains the fractional amount of the truncates due the failure of both the 1st and the 3rd cycle.)
+3. `<prefix>_tag_imbalance_factors.tsv.gz`: tab-separated values containing the estimated tag imbalance factors (bhat) for each cycle and lane. It has 3 columns (the same shape as the optional `<yields.tsv[.gz]>` input file):
+    * `cycle`: cycle index (1,2,... cmax)
+    * `lane`: lane index (1,2, ... lmax[c])
+    * `imbalance_factor`: imbalance factor of the corresponding cycle and reaction lane
 
 
 
 <a name="documentation"></a>
 ## Documentation
+
+* The publication "Denoising DNA Encoded Library Screens with Sparse Learning" by Peter Komar and Marko Kalinic provides an exposition of the assumptions behind the statistical model of deldenoiser and results of its performance of synthetic and experimental read count data.
+  * Preprint on [ChemRxiv](https://chemrxiv.org/articles/Denoising_DNA_Encoded_Library_Screens_with_Sparse_Learning/11573427)
+  * Peer-reviewed publication submitted to ACS Combinatorial Science
 
 * API documentation of deldenoiser Python package can be built by cloning the repository and running ```make docs``` command from the main directory, containing the Makefile.
 

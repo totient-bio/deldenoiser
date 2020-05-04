@@ -13,6 +13,7 @@ def _create_lane_index(lmax, include_zero):
     )
     return lanes
 
+
 def _create_lane_index_table(lmax, include_zero):
     """ Creates a pandas dataframe containing only the lane index combinations.
 
@@ -51,6 +52,7 @@ def generate_design_table(lmax):
     })
     return df_design
 
+
 def generate_yield_table(lmax, low=0.4, high=0.8):
     """ Generate yield data, y_{c, l_c} as a pandas dataframe
 
@@ -69,7 +71,7 @@ def generate_yield_table(lmax, low=0.4, high=0.8):
     cycles_list = []
     lane_list = []
     for cycle, lmax_c in enumerate(lmax):
-        cycles_list.extend([cycle+1] * lmax_c)
+        cycles_list.extend([cycle + 1] * lmax_c)
         lane_list.extend(list(range(1, lmax_c + 1, 1)))
 
     m = 0.5 * (low + high)
@@ -101,16 +103,22 @@ def generate_log10_association_constant_table(lmax, min=2.0, high=5.0):
         pandas.DataFrame: len(lmax) + 1 columns:
             "cycle_<c>_lane": extended lane id (0,1,2,... lmax[c]),
                 for c = 1,2,... len(lmax)
-            "log10_association_const": log10(K[L]), K measured in 1 / molar.
+            "log10_K": log10(K[L]), K measured in 1 / molar.
     """
 
     mu = min
     sigma = 0.5 * (high - min)
-    logK = mu + sigma * np.abs(norm.rvs(size=np.prod(np.array(lmax) + 1 )))
+    logK = mu + sigma * np.abs(norm.rvs(size=np.prod(np.array(lmax) + 1)))
 
     df = _create_lane_index_table(lmax, include_zero=True)
-    df['log10_association_const'] = logK
-    return df
+    df['log10_K'] = logK
+
+    index_cols = [f'cycle_{c+1}_lane' for c in range(len(lmax))]
+    q_arr = df[index_cols].values
+    truncates = (q_arr == 0).any(axis=1)
+    df_fullcycles = df[~truncates].copy()
+    df_truncates = df[truncates].copy()
+    return df, df_fullcycles, df_truncates
 
 
 def generate_sequencing_imbalance_table(lmax, low=0.5, high=2.0):
@@ -128,6 +136,8 @@ def generate_sequencing_imbalance_table(lmax, low=0.5, high=2.0):
             "cycle_<c>_lane": proper lane id (1,2,... lmax[c]),
                 for c = 1,2,... len(lmax)
             "sequencing_imbalance": unnormalized imbalance factors
+        pandas.DataFrame: 3 columns:
+            "cycle", "lane", "imbalance_factor"
     """
 
     mu_one = 0.5 * (np.log(low) + np.log(high)) / len(lmax)
@@ -141,7 +151,26 @@ def generate_sequencing_imbalance_table(lmax, low=0.5, high=2.0):
 
     df = _create_lane_index_table(lmax, include_zero=False)
     df['sequencing_imbalance'] = imbalance
-    return df
+
+    b = []
+    for c in range(len(lmax)):
+        bc = np.exp(log_factors[c])
+        bc /= np.sum(bc)
+        b.append(bc)
+
+    cycles_list = []
+    lane_list = []
+    for cycle, lmax_c in enumerate(lmax):
+        cycles_list.extend([cycle + 1] * lmax_c)
+        lane_list.extend(list(range(1, lmax_c + 1, 1)))
+
+    df_b = pd.DataFrame({
+        'cycle': cycles_list,
+        'lane': lane_list,
+        'imbalance_factor': np.concatenate(b)
+    })
+
+    return df, df_b
 
 
 def sample_reads(lamb_total, imbalance):
@@ -198,18 +227,28 @@ def generate_data(lmax,
     df_design = generate_design_table(lmax)
 
     imb_low, imb_high = sequencing_imbalance_range
-    df_imb = generate_sequencing_imbalance_table(lmax, low=imb_low, high=imb_high)
+    df_imb, df_b = generate_sequencing_imbalance_table(lmax, low=imb_low,
+                                                 high=imb_high)
 
     logK_min, logK_high = log10_association_constant_range
-    df_logK = generate_log10_association_constant_table(lmax, min=logK_min, high=logK_high)
-    df_logK['survival_rate'] = (1 + 1.0 / (protein_conc * 10**(df_logK['log10_association_const']))) ** (-selection_cycles)
+    df_logK, df_logK_fullcycles, df_logK_truncates = \
+        generate_log10_association_constant_table(lmax, min=logK_min,
+                                                  high=logK_high)
+    df_logK['survival_rate'] = (1 + 1.0 / (protein_conc * 10 ** (
+        df_logK['log10_K']))) ** (-selection_cycles)
+    df_logK_fullcycles['survival_rate'] = (1 + 1.0 / (protein_conc * 10 ** (
+        df_logK_fullcycles['log10_K']))) ** (-selection_cycles)
+    df_logK_truncates['survival_rate'] = (1 + 1.0 / (protein_conc * 10 ** (
+        df_logK_truncates['log10_K']))) ** (-selection_cycles)
 
     yield_low, yield_high = yield_range
     df_yield = generate_yield_table(lmax, low=yield_low, high=yield_high)
 
     imb = df_imb['sequencing_imbalance'].values
-    y = [np.array(df_yield['yield'][df_yield['cycle'] == c]) for c in range(1, len(lmax)+1, 1)]
-    logK = df_logK['log10_association_const'].values.reshape(np.array(lmax) + 1)
+    y = [np.array(df_yield['yield'][df_yield['cycle'] == c]) for c in
+         range(1, len(lmax) + 1, 1)]
+    logK = df_logK['log10_K'].values.reshape(
+        np.array(lmax) + 1)
 
     L = _create_lane_index(lmax, include_zero=False)  # proper lane indexes
     s_list = list(product(*[[0, 1] for _ in range(len(lmax))]))
@@ -217,7 +256,7 @@ def generate_data(lmax,
     for s_idx, s in enumerate(s_list):
         sL = np.array(s) * L
         logKs = logK[tuple(sL.T)]  # picks out logK entries for s*L
-        rs = (1 + 1.0 / (protein_conc * 10**(logKs))) ** (-selection_cycles)
+        rs = (1 + 1.0 / (protein_conc * 10 ** (logKs))) ** (-selection_cycles)
 
         ys = []
         for c in range(len(lmax)):
@@ -246,9 +285,10 @@ def generate_data(lmax,
 
     return {
         "design": df_design,
-        "sequencing_imbalance": df_imb,
-        "yield": df_yield,
-        "log10_association_constant": df_logK,
+        "imbalance_factors": df_b,
+        "yields": df_yield,
+        "fullcycles": df_logK_fullcycles,
+        "truncates": df_logK_truncates,
         "readcount": df_N,
         "preselection_readcount": df_N_pre,
         "postselection_readcount": df_N_post
@@ -257,17 +297,20 @@ def generate_data(lmax,
 
 if __name__ == '__main__':
     import os
+
     os.makedirs('./data/', exist_ok=True)
 
     size = 20
     design = [size, size, size]
     prefix = f'size{size}x{size}x{size}'
     data_tables = generate_data(design)
-    
-    for key in ['design', 'yield', 'preselection_readcount', 'postselection_readcount']:
+
+    for key in ['design', 'yields', 'preselection_readcount',
+                'postselection_readcount']:
         data_tables[key].to_csv(f'./input/{prefix}_{key}.tsv',
                                 sep='\t', index=False)
 
-    for key in ['sequencing_imbalance', 'log10_association_constant', 'readcount']:
-        data_tables[key].to_csv(f'./truth/{prefix}_{key}.tsv',
+    for key in ['imbalance_factors', 'fullcycles', 'truncates',
+                'readcount']:
+        data_tables[key].to_csv(f'./true/{prefix}_{key}.tsv',
                                 sep='\t', index=False)
